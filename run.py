@@ -33,24 +33,6 @@ except ImportError:
 TRITON_BENCH_CSV_DUMP_PATH = tempfile.gettempdir() + "/tritonbench/"
 
 
-def _run_in_task(op: str) -> None:
-    op_task_cmd = [] if IS_FBCODE else [sys.executable]
-    copy_sys_argv = copy.deepcopy(sys.argv)
-    copy_sys_argv = remove_cmd_parameter(copy_sys_argv, "--op")
-    copy_sys_argv = remove_cmd_parameter(copy_sys_argv, "--isolate")
-    add_cmd_parameter(copy_sys_argv, "--op", op)
-    op_task_cmd.extend(copy_sys_argv)
-    try:
-        print("[tritonbench] running command: " + " ".join(op_task_cmd))
-        subprocess.check_call(op_task_cmd, stdout=sys.stdout, stderr=sys.stderr)
-    except subprocess.CalledProcessError:
-        # By default, we will continue on the failed operators
-        pass
-    except KeyboardInterrupt:
-        print("KeyboardInterrupt received, exiting...")
-        sys.exit(1)
-
-
 def _run(args: argparse.Namespace, extra_args: List[str]) -> BenchmarkOperatorResult:
     if args.operator_loader:
         Opbench = load_opbench_by_name_from_loader(args)
@@ -122,7 +104,7 @@ def run(args: List[str] = []):
         for op in ops:
             args.op = op
             if args.isolate:
-                _run_in_task(op)
+                run_in_task(op)
             else:
                 _run(args, extra_args)
 

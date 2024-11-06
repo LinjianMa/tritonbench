@@ -159,6 +159,11 @@ def get_parser(args=None):
         action="store_true",
         help="bypass and continue on operator failure.",
     )
+    parser.add_argument(
+        "--child",
+        action="store_true",
+        help="Flag option that it is running in the child process.",
+    )
 
     if IS_FBCODE:
         parser.add_argument("--log-scuba", action="store_true", help="Log to scuba.")

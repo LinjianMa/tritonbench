@@ -11,9 +11,17 @@ from .hstu import get_test_inputs, RaggedHSTUAttn
 
 def parse_op_args(args: List[str]):
     parser = argparse.ArgumentParser()
-    parser.add_argument("--batch-size", type=int, default=8, help="Batch size")
+    parser.add_argument("--batch-size", type=int, default=512, help="Batch size")
     parser.add_argument("--heads", type=int, default=4, help="Number of heads")
-    parser.add_argument("--max-seq-len-log2", type=int, default=9)
+    parser.add_argument("--attn-dim", type=int, default=64, help="Attn dim")
+    parser.add_argument("--hidden-dim", type=int, default=64, help="Hidden dim")
+    parser.add_argument("--max-seq-len-log2", type=int, default=13)
+    parser.add_argument("--has-attn-bias", type=bool, default=True)
+    parser.add_argument("--delta-size", type=int, default=256)
+    parser.add_argument("--target-size", type=int, defualt=20)
+    parser.add_argument("--max-attn-len", type=int, defualt=0)
+    parser.add_argument("--contextual-seq-len", type=int, default=0)
+    parser.add_argument("--sl-alpha", type=float, default=2.0)
     parser.add_argument("--num-buckets", type=int, default=2048)
     return parser.parse_args(args)
 
@@ -25,23 +33,17 @@ class Operator(BenchmarkOperator):
         self, tb_args: argparse.Namespace, extra_args: Optional[List[str]] = None
     ):
         super().__init__(tb_args, extra_args=extra_args)
-        args = parse_op_args(self.extra_args)
-        self.batch_size = args.batch_size
-        self.num_heads = args.heads
-        self.max_seq_len = 2**args.max_seq_len_log2
-        self.num_buckets = args.num_buckets
+        self.args = parse_op_args(self.extra_args)
+        self.args.requires_grad = not (self.mode == Mode.FWD_NO_GRAD)
+        self.args.max_seq_len = 2**args.max_seq_len_log2
         # set a default number of inputs
         self._num_inputs = 10 if self._num_inputs is None else self._num_inputs
-        self.requires_grad = not (self.mode == Mode.FWD_NO_GRAD)
+        
 
     @register_benchmark()
     def hstu_triton_ragged_attention(self, qkv, seq_offsets, timestamps):
         attn = RaggedHSTUAttn(
-            self.batch_size,
-            self.num_heads,
-            self.max_seq_len,
-            self.num_buckets,
-            self.requires_grad,
+            self.args,
             persistent_kernel=False,
         )
         return lambda: attn(qkv, seq_offsets, timestamps)
@@ -50,11 +52,7 @@ class Operator(BenchmarkOperator):
     @register_benchmark(enabled=False)
     def hstu_triton_ragged_attention_persistent(self, qkv, seq_offsets, timestamps):
         attn = RaggedHSTUAttn(
-            self.batch_size,
-            self.num_heads,
-            self.max_seq_len,
-            self.num_buckets,
-            self.requires_grad,
+            self.args,
             persistent_kernel=True,
         )
         return lambda: attn(qkv, seq_offsets, timestamps)

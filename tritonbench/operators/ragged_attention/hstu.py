@@ -39,37 +39,43 @@ from typing import Tuple
 class RaggedHSTUAttn(torch.nn.Module):
     def __init__(
         self,
-        batch_size,
-        num_heads,
-        max_seq_len,
-        num_buckets,
-        requires_grad,
+        args,
         persistent_kernel: bool = False,
     ) -> None:
         super().__init__()
-        self.batch_size = batch_size
-        self.num_heads = num_heads
-        self.max_seq_len = max_seq_len
-        self.num_buckets = num_buckets
+        self.requires_grad = args.requires_grad
+        self.batch_size = args.batch_size
+        self.num_heads = args.num_heads
+        self.max_seq_len = args.max_seq_len
+        self.num_buckets = args.num_buckets
+        self.alpha = 1.0 / args.attn_dim
+        self.invalid_attn_mask_type = "lower_triangular"
+        lengths = generate_sparse_seq_len(
+            size=batch_size,
+            max_seq_len=seq_len,
+            sparsity=seq_sparsity,
+            device=torch.device("cuda"),
+        )
+        lengths = apply_SL(lengths, args.sl_alpha, max_seq_len=seq_len)
+
         self.all_ts_weights = torch.nn.Parameter(
             torch.randn(
                 (self.num_buckets + 1,),
                 dtype=torch.bfloat16,
-            ).requires_grad_(requires_grad).cuda()
+            ).requires_grad_(self.requires_grad).cuda()
         )
         self.all_pos_weights = torch.nn.Parameter(
             torch.randn(
                 (2 * self.max_seq_len - 1,),
                 dtype=torch.bfloat16,
-            ).requires_grad_(requires_grad).cuda()
+            ).requires_grad_(self.requires_grad).cuda()
         )
         self.persistent_kernel = persistent_kernel
 
+
     def forward(
-        self, qkv: torch.Tensor, seq_offsets: torch.Tensor, timestamps: torch.Tensor
+        self, **kwargs
     ) -> torch.Tensor:
-        NUM_BUCKETS = self.num_buckets
-        torch._check(timestamps.size(0) + 1 == seq_offsets.size(0))
 
         q = qkv[:, :, :128]
         k = qkv[:, :, 128:256]
@@ -143,7 +149,7 @@ class RaggedHSTUAttn(torch.nn.Module):
             grid = (1216,)
             _ragged_hstu_attn_fwd_persistent[grid](**kwargs)
         else:
-            _RaggedAttentionRelativeBiasFunction.apply(
+            return _RaggedAttentionRelativeBiasFunction.apply(
                 self.max_seq_len, # N
                 kwargs["alpha"],
                 q,
@@ -173,43 +179,63 @@ class RaggedHSTUAttn(torch.nn.Module):
 
 
 def get_test_inputs(
-    batch_size, num_heads, max_seq_len, requires_grad
+    args
 ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-    timestamp_deltas: torch.Tensor = (
-        torch.randint(
-            86400,
-            size=(batch_size, max_seq_len + 1),
-        )
-        .cuda()
-    )
-    timestamps = timestamp_deltas.cumsum(dim=1)
+    causal = True
+    time_delta = 0.0
+    num_buckets = 2048
+    time_bucket_fn = "sqrt"
+    time_bucket_incr = 60
+    time_bucket_div = 1.0
 
-    lengths = (
-        torch.randint(
-            max_seq_len + 1,
-            size=(batch_size,),
-        )
-        .cuda()
-    )
-    seq_offsets = (
-        torch.zeros(
+    timestamps = generate_hstu_timestamps(batch_size, seq_len)
+    num_buckets = args.num_buckets
+    seq_len = args.seq_len
+    seq2_offsets = torch.zeros(
             (batch_size + 1,),
             dtype=torch.int64,
+            device=torch.device("cuda"),
         )
-        .cuda()
-    )
-    seq_offsets[1:] = torch.cumsum(
-        lengths,
-        dim=0,
-    )
-    L = int(seq_offsets[-1].item())
+    seq2_offsets[1:] = torch.cumsum(lengths * lengths, dim=0)
 
-    qkv = (
-        torch.randn(
-            (L, num_heads, 512),
-            dtype=torch.bfloat16,
-        )
-        .requires_grad_(requires_grad)
-        .cuda()
-    )
-    return qkv, seq_offsets, timestamps
+    ts_weights: torch.Tensor = torch.empty(
+            (num_buckets + 1,),
+            device="cuda",
+            dtype=torch.float32,
+        ).uniform_(-0.1, 0.1)
+    pos_weights: torch.Tensor = torch.empty(
+            (2 * seq_len - 1,),
+            device="cuda",
+            dtype=torch.float32,
+        ).uniform_(-0.1, 0.1)
+    if args.requires_grad:
+        q = q.requires_grad_(True)
+        k = k.requires_grad_(True)
+        v = v.requires_grad_(True)
+        ts_weights = ts_weights.requires_grad_(True)
+        pos_weights = pos_weights.requires_grad_(True)
+    return {
+        "N": args.max_seq_len,
+        "alpha": args.alpha,
+        "q": q,
+        "k": k,
+        "v": v,
+        "seq_offsets": ,
+        "invalid_attn_mask_type": ,
+        "timestamps": ,
+        "ts_weights": ,
+        "pos_weights": ,
+        "causal": causal,
+        "num_buciets": ,
+        "time_bucket_fn": ,
+        "time_bucket_incr": ,
+        "time_bucket_div": ,
+        "time_delta": ,
+        "max_pos_ind": ,
+        "num_targets": ,
+        "attn_scale": ,
+        "relative_bias_type": ,
+        "max_attn_len": ,
+        "contextual_seq_len": ,
+        "sort_by_length": ,
+    }
